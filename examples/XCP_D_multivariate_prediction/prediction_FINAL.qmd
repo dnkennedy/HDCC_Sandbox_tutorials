@@ -1,0 +1,1023 @@
+---
+title: "predictions"
+author: "Michael Anderson, Eric Feczko"
+format: html
+editor: visual
+---
+
+## Libraries
+
+```{r}
+#| echo: false
+#| warning: false
+
+
+library(arrow)
+library(cifti)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(ggsci)
+library(lme4)
+library(lmerTest)
+library(nlme)
+library(plotrix)
+library(pls)
+library(reshape2)
+library(RSpectra)
+library(tidyr)
+
+```
+
+## Functions
+
+```{r}
+#| echo: false
+#| warning: false
+
+align_df_to_ids <- function(df, ids, id_col = "id") {
+  ids <- as.character(ids)
+  df[[id_col]] <- as.character(df[[id_col]])
+
+  missing <- setdiff(ids, df[[id_col]])
+  if (length(missing) > 0) {
+    stop(sprintf(
+      "[FATAL] %d ids not present in df$%s. Examples: %s",
+      length(missing), id_col, paste(head(missing, 10), collapse = ", ")
+    ))
+  }
+
+  df2 <- df %>% slice(match(ids, .data[[id_col]]))
+
+  if (!identical(df2[[id_col]], ids)) {
+    stop("[FATAL] align_df_to_ids(): id alignment failed.")
+  }
+  df2
+}
+
+align_rows_to_ids <- function(X, ids) {
+  ids <- as.character(ids)
+  rn <- rownames(X)
+
+  if (is.null(rn)) stop("[FATAL] align_rows_to_ids(): X has NULL rownames.")
+  rn <- as.character(rn)
+
+  missing <- setdiff(ids, rn)
+  if (length(missing) > 0) {
+    stop(sprintf(
+      "[FATAL] %d ids not present in rownames(X). Examples: %s",
+      length(missing), paste(head(missing, 10), collapse = ", ")
+    ))
+  }
+
+  X2 <- X[match(ids, rn), , drop = FALSE]
+
+  if (!identical(rownames(X2), ids)) {
+    stop("[FATAL] align_rows_to_ids(): rowname alignment failed.")
+  }
+  X2
+}
+
+CheckCIFTI <- function(pconndir,pconn) {
+  pconnpath <- paste(pconndir,"/",pconn,sep="")
+  ciftidata <- read_cifti(pconnpath)
+  cmat <- ciftidata$data
+  cmat_nans <- sum(is.na(cmat))
+  outputdf <- data.frame(pconn_name = pconn, number_nans = cmat_nans)
+  return(outputdf)
+}
+
+CommunityGridInfo <- function(community_df) {
+  communities <- unique(community_df$comm)
+  t(sapply(communities,function(x) {c(x,min(community_df$index[community_df$comm==x]),max(community_df$index[community_df$comm==x]))}))
+}
+
+extract_sub_id <- function(paths) sub(".*/sub-([^/]+)/.*", "\\1", paths)
+
+FCMap <- function(cmat,plottitle='Correlation Matrix',negmax=-0.5,posmax=1,xlabel="ROI",ylabel="ROI",commcolor='black',comms_df) {
+  cmat_nanzero <- cmat
+  cmat_nanzero[is.na(cmat_nanzero)] <- 0
+  cmat_long <- melt(cmat_nanzero)
+  ggplot(cmat_long, aes(x = Var1, y = Var2, fill = value)) +
+    geom_raster() +
+    geom_hline(yintercept=comms_df$comm_min,color = commcolor) +
+    geom_hline(yintercept=comms_df$comm_max,color = commcolor) +
+    geom_vline(xintercept=comms_df$comm_min,color = commcolor) +
+    geom_vline(xintercept=comms_df$comm_max,color = commcolor) +
+    scale_y_continuous(breaks=round((comms_df$comm_min + comms_df$comm_max)/2),labels=comms_df$labels) +
+    scale_x_continuous(breaks=round((comms_df$comm_min + comms_df$comm_max)/2),labels=comms_df$labels) +
+    scale_fill_gsea(limits = c(negmax,posmax)) +
+    coord_equal() +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle=90, vjust=.5, hjust=1)) +
+    labs(title = plottitle, x = xlabel, y = ylabel)
+}
+
+make_p <- function(phenos, session, ids) {
+  out <- phenos %>%
+    filter(session_id == session) %>%
+    select(-session_id) %>%
+    mutate(id = sub("^sub-", "", participant_id)) %>%
+    filter(id %in% ids) %>%
+    select(-participant_id)
+
+  # enforce unique id rows (if duplicates exist, you must resolve upstream)
+  if (anyDuplicated(out$id)) {
+    dup <- out$id[duplicated(out$id)]
+    stop(sprintf(
+      "[FATAL] Duplicated IDs in phenos for session %s. Examples: %s",
+      session, paste(head(unique(dup), 10), collapse = ", ")
+    ))
+  }
+
+  out
+}
+
+make_X <- function(paths) {
+  ids <- extract_sub_id(paths)
+
+  X <- do.call(rbind, lapply(paths, pconnFunc))
+  rownames(X) <- ids
+
+  # sanity checks
+  stopifnot(nrow(X) == length(ids))
+  stopifnot(identical(rownames(X), ids))
+
+  X
+}
+
+ManPlot <- function(V,
+                    predictor.names = NULL,
+                    group.structure = NULL,
+                    specific.groups = NULL,
+                    exclude.groups = NULL,
+                    man.thresh = 0,
+                    special.colors = NULL,
+                    optional.index = NULL,
+                    point.size = 1.5,
+                    out.prefix = "Manhattan_Vector",
+                    out.dir = ".",
+                    width = 1600,
+                    height = 900,
+                    dpi = 200) {
+
+  # ---- checks ----
+  V <- as.matrix(V)
+  p <- nrow(V)
+  nvec <- ncol(V)
+
+  if (is.null(predictor.names)) predictor.names <- paste0("X", seq_len(p))
+  if (length(predictor.names) != p) stop("predictor.names must have length p (= nrow(V)).")
+
+  if (is.null(group.structure)) group.structure <- rep("group1", p)
+  if (length(group.structure) != p) stop("group.structure must have length p (= nrow(V)).")
+
+  # ---- index handling (FIXED) ----
+  if (is.null(optional.index)) {
+    index <- seq_len(p)
+  } else {
+    if (length(optional.index) != p) stop("Specify same number of indices as predictors (length p).")
+    index <- optional.index
+  }
+
+  # ---- colors ----
+  dfcolor <- NULL
+  if (!is.null(special.colors)) {
+    # Expect special.colors as a 2-col object: group, color
+    dfcolor <- as.data.frame(special.colors, stringsAsFactors = FALSE)
+    if (ncol(dfcolor) != 2) stop("special.colors must have 2 columns: group, color.")
+    colnames(dfcolor) <- c("group", "color")
+    dfcolor$group <- as.factor(dfcolor$group)
+  }
+
+  # ---- requires ----
+  if (!requireNamespace("dplyr", quietly = TRUE)) stop("Please install 'dplyr'.")
+  if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Please install 'ggplot2'.")
+  if (!requireNamespace("ggtext", quietly = TRUE)) stop("Please install 'ggtext'.")
+  if (!requireNamespace("forcats", quietly = TRUE)) stop("Please install 'forcats'.")
+
+  # ---- iterate vectors ----
+  for (i in seq_len(nvec)) {
+
+    df <- data.frame(
+      pred  = predictor.names,
+      group = as.factor(group.structure),
+      index = index,
+      stringsAsFactors = FALSE
+    )
+
+    # subset groups if requested
+    if (!is.null(specific.groups)) df <- dplyr::filter(df, group %in% specific.groups)
+    if (!is.null(exclude.groups))  df <- dplyr::filter(df, !group %in% exclude.groups)
+
+    # keep colors aligned to filtered groups
+    dfcolor_i <- dfcolor
+    if (!is.null(dfcolor_i)) {
+      if (!is.null(specific.groups)) dfcolor_i <- dplyr::filter(dfcolor_i, group %in% specific.groups)
+      if (!is.null(exclude.groups))  dfcolor_i <- dplyr::filter(dfcolor_i, !group %in% exclude.groups)
+    }
+
+    # values
+    df$V <- abs(V[, i])
+
+    # order within group by index, then build cumulative x-axis
+    df <- df %>%
+      dplyr::group_by(group) %>%
+      dplyr::arrange(index, .by_group = TRUE) %>%
+      dplyr::mutate(newindx = dplyr::row_number()) %>%
+      dplyr::ungroup()
+
+    df2 <- df %>%
+      dplyr::group_by(group) %>%
+      dplyr::summarise(max_idx = max(newindx), .groups = "drop") %>%
+      dplyr::mutate(idx_add = dplyr::lag(cumsum(max_idx), default = 0)) %>%
+      dplyr::select(group, idx_add)
+
+    plot_data <- df %>%
+      dplyr::inner_join(df2, by = "group") %>%
+      dplyr::mutate(idx_cum = newindx + idx_add)
+
+    # default colors if none supplied
+    if (is.null(dfcolor_i)) {
+      # alternating two colors
+      groups <- levels(plot_data$group)
+      dfcolor_i <- data.frame(
+        group = factor(groups, levels = groups),
+        color = rep(c("#276FBF", "#183059"), length.out = length(groups)),
+        stringsAsFactors = FALSE
+      )
+    } else {
+      # ensure all groups present
+      dfcolor_i$group <- factor(dfcolor_i$group)
+      # If user omitted some groups, fill with alternating defaults
+      missing_groups <- setdiff(levels(plot_data$group), as.character(dfcolor_i$group))
+      if (length(missing_groups) > 0) {
+        add <- data.frame(
+          group = factor(missing_groups, levels = levels(plot_data$group)),
+          color = rep(c("#276FBF", "#183059"), length.out = length(missing_groups)),
+          stringsAsFactors = FALSE
+        )
+        dfcolor_i <- dplyr::bind_rows(dfcolor_i, add)
+      }
+      # align factor levels
+      dfcolor_i$group <- factor(dfcolor_i$group, levels = levels(plot_data$group))
+    }
+
+    axis_set <- plot_data %>%
+      dplyr::group_by(group) %>%
+      dplyr::summarise(center = mean(idx_cum), .groups = "drop") %>%
+      dplyr::left_join(dfcolor_i, by = "group")
+
+    ylim <- 1.2 * max(plot_data$V, na.rm = TRUE)
+
+    gg_plot_title <- paste0("Manhattan Vector ", i)  # (FIXED)
+
+    manhplot <- ggplot2::ggplot(
+      data = plot_data,
+      mapping = ggplot2::aes(x = idx_cum, y = V, color = forcats::as_factor(group))
+    ) +
+      ggplot2::geom_point(alpha = 0.75, size = point.size) +
+      ggplot2::scale_x_continuous(label = axis_set$group, breaks = axis_set$center) +
+      ggplot2::scale_y_continuous(expand = c(0, 0), limits = c(0, ylim)) +
+      ggplot2::scale_color_manual(values = axis_set$color) +
+      ggplot2::labs(x = NULL, y = "Absolute Value \nEigenvector \nLoadings") +
+      ggplot2::ggtitle(gg_plot_title) +
+      ggplot2::theme_minimal() +
+      ggplot2::theme(
+        legend.position = "none",
+        panel.grid.major.x = ggplot2::element_blank(),
+        panel.grid.minor.x = ggplot2::element_blank(),
+        axis.title.y = ggtext::element_markdown(),
+        axis.text.x = ggplot2::element_text(angle = 60, size = 6, vjust = 0.5)
+      )
+
+    if (man.thresh > 0) {
+      manhplot <- manhplot +
+        ggplot2::geom_hline(yintercept = man.thresh, color = "red", linetype = "solid")
+    }
+
+    # ---- save ----
+    if (!dir.exists(out.dir)) dir.create(out.dir, recursive = TRUE)
+    fname <- file.path(out.dir, sprintf("%s_%d.png", out.prefix, i))
+    ggplot2::ggsave(filename = fname, plot = manhplot, width = width / dpi, height = height / dpi, dpi = dpi)
+
+    # also print to current device (optional)
+    print(manhplot)
+  }
+
+  invisible(TRUE)
+}
+
+pconnFunc <- function(path){
+  pconn <- cifti::read_cifti(path)
+  mat <- pconn$data
+  vec <- mat[upper.tri(mat, diag = FALSE)]
+  vec
+}
+
+ReshapeVectorAsMatrix <- function(dummy_vec,matlength,diagval=1) {
+  dummy_emptymat = matrix( data = rep(0,matlength^2),nrow = matlength, ncol = matlength)
+  dummy_emptymat[upper.tri(dummy_emptymat,diag = FALSE)] <- dummy_vec
+  diag(dummy_emptymat) <- diagval
+  dummy_transpose <- t(dummy_emptymat)
+  dummy_transpose[upper.tri(dummy_transpose)] <- dummy_vec
+  return(dummy_transpose)
+}
+ReshapeWeightsAsMatrices <- function(weightarray,matlength) {
+  weightindex <- 1
+  weightlimit <- dim(weightarray)[2]
+  weightlist <- vector("list", weightlimit)
+  while(weightindex <= weightlimit) {
+      weightlist[[weightindex]] <- ReshapeVectorAsMatrix(weightarray[,weightindex],matlength)
+      weightindex <- weightindex + 1
+  }
+  return(weightlist)
+}
+
+right_rows <- function (data, times, ids, Q_points) {
+    fids <- factor(ids, levels = unique(ids))
+    if (!is.list(Q_points))
+        Q_points <- split(Q_points, row(Q_points))
+    ind <- mapply(findInterval, Q_points, split(times, fids))
+    ind[ind < 1] <- 1
+    rownams_id <- split(row.names(data), fids)
+    ind <- mapply(`[`, rownams_id, split(ind, col(ind)))
+    data[c(ind), ]
+}
+
+ylmepred <- function (lmeObject, newdata, timeVar, times = NULL, M = 200L, 
+  interval = c("confidence", "prediction"), all_times = FALSE, 
+  level = 0.95, return_data = FALSE, seed = 1L) 
+{
+  if (!inherits(lmeObject, "lme") && !inherits(lmeObject, 
+    "lmeComponents")) 
+    stop("Use only with 'lme' or 'lmeComponents' objects.\n")
+  interval <- match.arg(interval)
+  if (inherits(lmeObject, "lme")) {
+    data <- lmeObject$data
+    formYx <- formula(lmeObject)
+    mfX <- model.frame(terms(formYx), data = data)
+    TermsX <- attr(mfX, "terms")
+    formYz <- formula(lmeObject$modelStruct$reStruct[[1]])
+    mfZ <- model.frame(terms(formYz), data = data)
+    TermsZ <- attr(mfZ, "terms")
+    idVar <- names(lmeObject$modelStruct$reStruct)
+    betas <- fixef(lmeObject)
+    sigma <- lmeObject$sigma
+    D <- lapply(pdMatrix(lmeObject$modelStruct$reStruct), 
+      "*", sigma^2)[[1]]
+    V <- vcov(lmeObject)
+    times_orig <- data[[timeVar]]
+    times_orig <- times_orig[!is.na(times_orig)]
+  }
+  else {
+    formYx <- lmeObject$formYx
+    TermsX <- lmeObject$TermsX
+    formYz <- lmeObject$formYz
+    TermsZ <- lmeObject$TermsZ
+    idVar <- lmeObject$idVar
+    betas <- lmeObject$betas
+    sigma <- lmeObject$sigma
+    D <- lmeObject$D
+    V <- lmeObject$V
+    times_orig <- lmeObject$times_orig
+  }
+  all_vars <- unique(c(all.vars(TermsX), all.vars(TermsZ)))
+  newdata_nomiss <- newdata[complete.cases(newdata[all_vars]), 
+    ]
+  mfX_new <- model.frame(TermsX, data = newdata_nomiss)
+  X_new <- model.matrix(formYx, mfX_new)
+  mfZ_new <- model.frame(TermsZ, data = newdata_nomiss)
+  Z_new <- model.matrix(formYz, mfZ_new)
+  na_ind <- attr(mfX_new, "na.action")
+  y_new <- model.response(mfX_new, "numeric")
+  if (length(idVar) > 1) 
+    stop("the current version of the function only works with a single grouping variable.\n")
+  if (is.null(newdata[[idVar]])) 
+    stop("subject id variable not in newdata.")
+  id_nomiss <- match(newdata_nomiss[[idVar]], unique(newdata_nomiss[[idVar]]))
+  n <- length(unique(id_nomiss))
+  modes <- matrix(0, n, ncol(Z_new))
+  post_vars <- DZtVinv <- vector("list", n)
+  for (i in seq_len(n)) {
+    id_i <- id_nomiss == i
+    X_new_id <- X_new[id_i, , drop = FALSE]
+    Z_new_id <- Z_new[id_i, , drop = FALSE]
+    Vi_inv <- solve(Z_new_id %*% tcrossprod(D, Z_new_id) + 
+      sigma^2 * diag(sum(id_i)))
+    DZtVinv[[i]] <- tcrossprod(D, Z_new_id) %*% Vi_inv
+    modes[i, ] <- c(DZtVinv[[i]] %*% (y_new[id_i] - X_new_id %*% 
+      betas))
+    t1 <- DZtVinv[[i]] %*% Z_new_id %*% D
+    t2 <- DZtVinv[[i]] %*% X_new_id %*% V %*% crossprod(X_new_id, 
+      Vi_inv) %*% Z_new_id %*% D
+    post_vars[[i]] <- D - t1 + t2
+  }
+  fitted_y <- c(X_new %*% betas) + rowSums(Z_new * modes[id_nomiss, 
+    , drop = FALSE])
+  if (is.null(times) || !is.numeric(times)) {
+    times <- seq(min(times_orig), max(times_orig), length.out = 100)
+  }
+  id <- match(newdata[[idVar]], unique(newdata[[idVar]]))
+  last_time <- tapply(newdata[[timeVar]], id, max)
+  times_to_pred <- lapply(last_time, function(t) if (all_times) 
+    times
+  else times[times > t])
+  id_pred <- rep(seq_len(n), sapply(times_to_pred, length))
+  newdata_pred <- right_rows(newdata, newdata[[timeVar]], 
+    id, times_to_pred)
+  newdata_pred[[timeVar]] <- unlist(times_to_pred)
+  mfX_new_pred <- model.frame(TermsX, data = newdata_pred, 
+    na.action = NULL)
+  X_new_pred <- model.matrix(formYx, mfX_new_pred)
+  mfZ_new_pred <- model.frame(TermsZ, data = newdata_pred, 
+    na.action = NULL)
+  Z_new_pred <- model.matrix(formYz, mfZ_new_pred)
+  predicted_y <- c(X_new_pred %*% betas) + rowSums(Z_new_pred * 
+    modes[id_pred, , drop = FALSE])
+  return(list(fit=fitted_y, pred=predicted_y))
+}
+
+```
+
+## Files
+
+```{r}
+#| eval: false
+#| echo: false
+
+## ============================================================
+## Get all files from all subject subdirectories
+## ============================================================
+
+ROOT <- "/shared/hackathon/abcc/abcc_files/derivatives/abcd-hcp-pipeline_v0.1.4"
+
+## ------------------------------------------------------------
+## 1. Get subject directories
+## ------------------------------------------------------------
+subs <- list.dirs(
+  path        = ROOT,
+  full.names  = TRUE,
+  recursive   = FALSE
+)
+
+# Keep only directories that start with "sub-"
+subs <- subs[grepl("^sub-", basename(subs))]
+
+pconnname <- "task-rest_bold_atlas-Gordon2014FreeSurferSubcortical_desc-filtered_timeseries_thresh-fd0p2mm_censor-10min_conndata-network_connectivity"
+
+cat("Number of subject directories found:", length(subs), "\n")
+
+## ------------------------------------------------------------
+## 2. Get all files recursively within each subject
+## ------------------------------------------------------------
+sessions <- list.files(
+  path       = subs,
+  recursive  = FALSE,
+  full.names = TRUE
+)
+
+cat("Total sessions found:", length(sessions), "\n")
+
+head(sessions)
+pconnpattern = paste(pconnname,"\\.pconn\\.nii$",sep="")
+pconn_files <- list.files(
+  path       = sessions,
+  pattern    = pconnpattern,
+  recursive  = TRUE,
+  full.names = TRUE
+)
+
+cat("Total pconn files found:", length(pconn_files), "\n")
+
+subject_ids <- sub(".*(sub-[^/]+).*", "\\1", pconn_files)
+subject_ids_clean <- sub(".*sub-([^_]+)_ses.*", "\\1", subject_ids)
+
+ses_id <- sub(".*_(ses-[^_]+)_.*", "\\1", subject_ids)
+head(ses_id)
+```
+
+```{r}
+#| eval: false
+#| echo: false
+ses_00A <- pconn_files[grepl("_ses-00A", basename(pconn_files))]
+sub_ids_00A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_00A)
+ses_02A <- pconn_files[grepl("_ses-02A", basename(pconn_files))]
+sub_ids_02A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_02A)
+ses_04A <- pconn_files[grepl("_ses-04A", basename(pconn_files))]
+sub_ids_04A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_04A)
+ses_06A <- pconn_files[grepl("_ses-06A", basename(pconn_files))]
+sub_ids_06A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_06A)
+
+```
+
+```{r}
+# common_ids <- Reduce(
+#   intersect,
+#   list(sub_ids_00A, sub_ids_02A, sub_ids_04A)
+# )
+
+common_ids <- readRDS("common.RDS")
+
+length(common_ids)
+head(common_ids)
+```
+
+```{r}
+#| echo: false
+phenofolder <- "/shared/abcd-6-0-release-tabulated-prod"
+phenofile <- paste(phenofolder,"nc_y_nihtb.parquet",sep = "/")
+phenos <- read_parquet(phenofile)
+
+# Variables to evaluate
+pheno_vars <- setdiff(names(phenos), c("participant_id", "session_id"))
+
+na_table <- phenos %>%
+  group_by(session_id) %>%
+  summarise(
+    across(
+      all_of(pheno_vars),
+      ~ sum(!is.na(.)),
+      .names = "{.col}"
+    ),
+    .groups = "drop"
+  )
+
+na_table_t <- na_table %>%
+  pivot_longer(
+    -session_id,
+    names_to = "variable",
+    values_to = "n_non_missing"
+  ) %>%
+  pivot_wider(
+    names_from = session_id,
+    values_from = n_non_missing
+  )
+
+na_table_t
+
+```
+
+```{r}
+#| warning: false
+
+## ============================================================
+## UPDATED SOURCE CODE
+## - Enforces a single canonical ordering: common_ids
+## - Reorders X0/X2/X4 AND p0/p2/p4 to match common_ids
+## - Adds strict sanity checks so misalignment can’t slip through
+## ============================================================
+
+
+options(stringsAsFactors = FALSE)
+
+## ------------------------------------------------------------
+## Helpers -- Organized as Functions above
+## ------------------------------------------------------------
+
+
+## ------------------------------------------------------------
+## 1) Build X matrices
+## ------------------------------------------------------------
+# X0 <- make_X(ses_00A)
+# X2 <- make_X(ses_02A)
+# X4 <- make_X(ses_04A)
+
+## ------------------------------------------------------------
+## 2) First-pass restrict to your current common_ids
+##    (keeps only IDs that appear in the pconn matrices)
+## ------------------------------------------------------------
+# X0 <- X0[rownames(X0) %in% common_ids, , drop = FALSE]
+# X2 <- X2[rownames(X2) %in% common_ids, , drop = FALSE]
+# X4 <- X4[rownames(X4) %in% common_ids, , drop = FALSE]
+
+X0 <- readRDS("X0.RDS")
+X0 <- scale(X0)
+X2 <- readRDS("X2.RDS")
+X2 <- scale(X2)
+X4 <- readRDS("X4.RDS")
+X4 <- scale(X4)
+
+## ------------------------------------------------------------
+## 3) Load example pconn so we know the number of ROIs 
+##    (ensures we can accurately retrieve the matrix and visualize)
+## ------------------------------------------------------------
+
+nROIs <-  pconnFunc(ses_00A[1],countROIs=TRUE)
+
+
+## ------------------------------------------------------------
+## 4) Load phenos and compute FINAL common_ids intersection
+##    (ensures IDs exist in ALL sessions + phenos)
+## ------------------------------------------------------------
+phenos <- read_parquet(phenofile) %>%
+  dplyr::select(
+    nc_y_nihtb__picsq__raw_score,
+    participant_id,
+    session_id
+  )
+
+p0 <- make_p(phenos, "ses-00A", common_ids)
+p2 <- make_p(phenos, "ses-02A", common_ids)
+p4 <- make_p(phenos, "ses-04A", common_ids)
+
+common_ids <- Reduce(
+  intersect,
+  list(common_ids, p0$id, p2$id, p4$id)
+)
+
+cat("[INFO] length(common_ids) =", length(common_ids), "\n")
+cat("[INFO] head(common_ids) =", paste(head(common_ids), collapse = ", "), "\n")
+
+## ------------------------------------------------------------
+## 5) NOW enforce canonical ordering everywhere = common_ids
+## ------------------------------------------------------------
+# Align X matrices to common_ids order
+X0 <- align_rows_to_ids(X0, common_ids)
+X2 <- align_rows_to_ids(X2, common_ids)
+X4 <- align_rows_to_ids(X4, common_ids)
+
+# Rebuild p0/p2/p4 on FINAL common_ids, then align order
+p0 <- make_p(phenos, "ses-00A", common_ids) %>% align_df_to_ids(common_ids)
+p2 <- make_p(phenos, "ses-02A", common_ids) %>% align_df_to_ids(common_ids)
+p4 <- make_p(phenos, "ses-04A", common_ids) %>% align_df_to_ids(common_ids)
+
+## ------------------------------------------------------------
+## 5) Final sanity checks + temp table for debugging
+## ------------------------------------------------------------
+stopifnot(identical(rownames(X0), common_ids))
+stopifnot(identical(rownames(X2), common_ids))
+stopifnot(identical(rownames(X4), common_ids))
+stopifnot(identical(p0$id, common_ids))
+stopifnot(identical(p2$id, common_ids))
+stopifnot(identical(p4$id, common_ids))
+
+temp <- data.frame(
+  rownames_X0 = rownames(X0),
+  rownames_X2 = rownames(X2),
+  rownames_X4 = rownames(X4),
+  common_ids  = common_ids,
+  p0_id       = p0$id,
+  p2_id       = p2$id,
+  p4_id       = p4$id,
+  stringsAsFactors = FALSE
+)
+
+cat("[INFO] Alignment checks passed. temp rows =", nrow(temp), "\n")
+```
+
+```{r}
+#| echo: false
+p0$time <- 0
+p2$time <- 2
+p4$time <- 4
+colnames(p0) <- c("y", "id", "time")
+colnames(p2) <- c("y", "id", "time")
+colnames(p4) <- c("y", "id", "time")
+
+```
+
+```{r}
+#| echo: false
+
+set.seed(123)  # reproducibility
+
+## ------------------------------------------------------------
+## 1) Get unique IDs
+## ------------------------------------------------------------
+all_ids <- common_ids
+
+length(all_ids)   # should be 2023
+
+## ------------------------------------------------------------
+## 2) Randomly select 1800 IDs for training
+## ------------------------------------------------------------
+train_ids <- sample(all_ids, size = 1800, replace = FALSE)
+
+## Remaining go to test
+test_ids <- setdiff(all_ids, train_ids)
+
+length(train_ids)  # 1800
+length(test_ids)   # 223
+
+
+```
+
+## Singular Value Decomposition
+
+```{r}
+#| echo: false
+
+
+x0train <- X0[rownames(X0) %in% train_ids, , drop = FALSE]
+x0test <- X0[!(rownames(X0) %in% train_ids), , drop = FALSE]
+xmeans <- colMeans(x0train)
+x0train <- t(apply(x0train, 1, function(x) x-xmeans))
+x0test <- t(apply(x0test, 1, function(x) x-xmeans))
+
+x2train <- X2[rownames(X2) %in% train_ids, , drop = FALSE]
+x2test <- X2[!(rownames(X2) %in% train_ids), , drop = FALSE]
+xmeans <- colMeans(x2train)
+x2train <- t(apply(x2train, 1, function(x) x-xmeans))
+x2test <- t(apply(x2test, 1, function(x) x-xmeans))
+
+x4train <- X4[rownames(X4) %in% train_ids, , drop = FALSE]
+x4test <- X4[!(rownames(X4) %in% train_ids), , drop = FALSE]
+xmeans <- colMeans(x4train)
+x4train <- t(apply(x4train, 1, function(x) x-xmeans))
+x4test <- t(apply(x4test, 1, function(x) x-xmeans))
+```
+
+```{r}
+#| echo: false
+k <- 10
+
+sv0 <- svds(x0train, k=k, nu=k, nv=k)
+pc0train <- x0train %*% as.matrix(sv0$v)
+pc0test <- x0test %*% as.matrix(sv0$v)
+y0train <- p0 %>% filter(id %in% rownames(pc0train))
+colnames(pc0train) <- paste0("pc", 1:k)
+y0test <- p0 %>% filter(id %in% rownames(pc0test))
+colnames(pc0test) <- paste0("pc", 1:k)
+
+sv2 <- svds(x2train, k=k, nu=k, nv=k)
+pc2train <- x2train %*% as.matrix(sv2$v)
+pc2test <- x2test %*% as.matrix(sv2$v)
+y2train <- p2 %>% filter(id %in% rownames(pc2train))
+colnames(pc2train) <- paste0("pc", 1:k)
+y2test <- p2 %>% filter(id %in% rownames(pc2test))
+colnames(pc2test) <- paste0("pc", 1:k)
+
+sv4 <- svds(x4train, k=k, nu=k, nv=k)
+pc4train <- x4train %*% as.matrix(sv4$v)
+pc4test <- x4test %*% as.matrix(sv4$v)
+y4train <- p4 %>% filter(id %in% rownames(pc4train))
+colnames(pc4train) <- paste0("pc", 1:k)
+y4test <- p4 %>% filter(id %in% rownames(pc4test))
+colnames(pc4test) <- paste0("pc", 1:k)
+
+ztrain <- rbind(pc0train, pc2train, pc4train)
+ytrain <- rbind(y0train,y2train,y4train)
+data_train <- data.frame(ytrain, ztrain)
+
+ztest <- rbind(pc0test, pc2test, pc4test)
+ytest <- rbind(y0test,y2test,y4test)
+data_test <- data.frame(ytest, ztest)
+
+str(sv0)
+str(sv2)
+str(sv4)
+
+```
+
+## Linear Mixed Effects Models
+
+```{r}
+#| echo: false
+
+
+
+```
+
+```{r}
+mf_vars <- c("y", "id", "time", paste0("pc", 1:10))
+
+bad_counts <- sapply(data_train[, mf_vars, drop = FALSE], function(x) {
+  if (is.numeric(x)) sum(!is.finite(x)) else sum(is.na(x))
+})
+
+bad_counts
+
+
+```
+
+```{r}
+model_1 <- nlme::lme(
+  fixed  = y ~ pc1 + pc2 + pc3 + pc4 + pc5 + pc6 + pc7 + pc8 + pc9 + pc10 + time*pc1,
+  random = ~ 1 | id,
+  data   = data_train,
+  method = "REML",
+  na.action = na.omit
+)
+
+output <- ylmepred(model_1, data_test, timeVar = "time", times = c(0,2,4), all_times = TRUE, seed = 1L)
+
+```
+
+```{r}
+
+nm <- names(output$fit)
+
+df_ids <- data.frame(
+  key  = nm,  # <-- keep original key
+  ID   = sub("\\..*$", "", nm),
+  time = ifelse(grepl("\\.", nm), sub("^.*\\.", "", nm), NA_character_),
+  stringsAsFactors = FALSE
+)
+
+df_ids$time <- as.integer(df_ids$time)
+df_ids$time <- ifelse(is.na(df_ids$time), 0L, df_ids$time * 2L)
+
+# map yhat by key (order-proof)
+df_ids$yhat <- unname(output$fit[df_ids$key])
+
+# optional
+df_ids$key <- NULL
+```
+
+```{r}
+results <- data_test %>%
+  mutate(ID = id,
+         time = as.integer(time),
+         y=y) %>% 
+  dplyr::select(ID, time, y) %>%
+  inner_join(., df_ids, by=c("ID", "time"))
+```
+
+## Correlations between Predicted and Observed
+
+```{r}
+r0 <- results %>% filter(time == 0)
+cor(r0$y, r0$yhat)
+r2 <- results %>% filter(time == 2)
+cor(r2$y, r2$yhat)
+r4 <- results %>% filter(time == 4)
+cor(r4$y, r4$yhat)
+```
+
+## Plots
+
+```{r}
+
+ggplot(r0, aes(x = y, y = yhat)) +
+  stat_density_2d(
+    aes(fill = after_stat(level)),
+    geom = "polygon",
+    alpha = 0.4,
+    contour = TRUE
+  ) +
+  scale_fill_viridis_c(option = "C", guide = "none") +
+
+  geom_point(alpha = 0.4, size = 1) +
+
+  geom_abline(
+    slope = 1, intercept = 0,
+    linetype = "dashed",
+    color = "red",
+    linewidth = 1
+  ) +
+
+  coord_equal() +
+
+  labs(
+    x = "Observed (y)",
+    y = "Predicted (yhat)",
+    title = "Observed vs Predicted",
+    subtitle = "Red dashed line = 45° reference"
+  ) +
+
+  theme_minimal(base_size = 14)
+```
+
+```{r}
+
+ggplot(r2, aes(x = y, y = yhat)) +
+  stat_density_2d(
+    aes(fill = after_stat(level)),
+    geom = "polygon",
+    alpha = 0.4,
+    contour = TRUE
+  ) +
+  scale_fill_viridis_c(option = "C", guide = "none") +
+
+  geom_point(alpha = 0.4, size = 1) +
+
+  geom_abline(
+    slope = 1, intercept = 0,
+    linetype = "dashed",
+    color = "red",
+    linewidth = 1
+  ) +
+
+  coord_equal() +
+
+  labs(
+    x = "Observed (y)",
+    y = "Predicted (yhat)",
+    title = "Observed vs Predicted",
+    subtitle = "Red dashed line = 45° reference"
+  ) +
+
+  theme_minimal(base_size = 14)
+```
+
+```{r}
+
+ggplot(r4, aes(x = y, y = yhat)) +
+  stat_density_2d(
+    aes(fill = after_stat(level)),
+    geom = "polygon",
+    alpha = 0.4,
+    contour = TRUE
+  ) +
+  scale_fill_viridis_c(option = "C", guide = "none") +
+
+  geom_point(alpha = 0.4, size = 1) +
+
+  geom_abline(
+    slope = 1, intercept = 0,
+    linetype = "dashed",
+    color = "red",
+    linewidth = 1
+  ) +
+
+  coord_equal() +
+
+  labs(
+    x = "Observed (y)",
+    y = "Predicted (yhat)",
+    title = "Observed vs Predicted",
+    subtitle = "Red dashed line = 45° reference"
+  ) +
+
+  theme_minimal(base_size = 14)
+```
+
+## Heatmap Visualizations
+
+```{r}
+## Heatmap visualizations
+
+# loading R data containing ROI indices to determine ROI order
+load("~/ROI.RData")
+ROIindex <- unique(ROI$roi1)
+ROIcomm <- sapply( ROIindex ,function(x) {ROI$com1[ROI$roi1==x][1]} )
+ROIdf <- data.frame(index = ROIindex, comm = ROIcomm)
+ROIdf_cortical <- ROIdf[1:333,]
+ROIdf_cortical_ordered <- ROIdf_cortical[order(ROIdf_cortical$comm),]
+ROIdf_cortical_ordered$old_index <- ROIdf_cortical_ordered$index
+ROIdf_cortical_ordered$index <- 1:333
+
+#load community file to define grid lines and set organization
+Gordoncommfile <- "~/gordon_communities_plus_subcortical.csv"
+Gordoncomms <- read.csv(Gordoncommfile)
+
+```
+
+```{r}
+## reshape weight vectors back into appropriate matrices
+sv0weightmatlist <- ReshapeWeightsAsMatrices(sv0$v,nROIs)
+sv2weightmatlist <- ReshapeWeightsAsMatrices(sv2$v,nROIs)
+sv4weightmatlist <- ReshapeWeightsAsMatrices(sv4$v,nROIs)
+```
+
+```{r}
+#heatmap visualizations 
+FCMap(sv0weightmatlist[[1]],plottitle="first PC baseline",negmax=-0.03,posmax=0.03,comms_df = Gordoncomms)
+FCMap(sv2weightmatlist[[1]],plottitle="first PC year 2",negmax=-0.03,posmax=0.03,comms_df = Gordoncomms)
+FCMap(sv4weightmatlist[[1]],plottitle="first PC year 4",negmax=-0.03,posmax=0.03,comms_df = Gordoncomms)
+
+```
+
+## Manhattan Plot
+
+```{r}
+
+X <- as.matrix(X0)              # n x p
+y <- as.numeric(p0$y)           # length n
+
+fit <- plsr(y ~ X, ncomp = 20,  # choose a max; tune later
+            scale = FALSE, center = TRUE,
+            validation = "CV",
+            method = "kernelpls")
+```
+
+```{r}
+v1 <- fit$loading.weights[, 1]
+```
+
+```{r}
+load("ROI.RData")
+# Define the inputs ManPlot expects
+group_structure <- ROI$group
+optional_index  <- ROI$index
+
+# Optional: predictor names (use ROI$roi if it matches your predictors)
+# Otherwise keep colnames(X)
+predictor_names <- if (!is.null(ROI$roi)) ROI$roi else colnames(X)
+
+# Sanity checks (these must match p = number of predictors)
+stopifnot(length(group_structure) == length(predictor_names))
+stopifnot(length(optional_index)  == length(predictor_names))
+stopifnot(length(v1)              == length(predictor_names))
+
+# Plot the first PLS "eigenvector" (loading weight vector)
+ManPlot(
+  V = v1,
+  predictor.names = predictor_names,
+  group.structure = group_structure,
+  optional.index = optional_index,
+  man.thresh = 0,
+  point.size = 1.5
+)
+```
