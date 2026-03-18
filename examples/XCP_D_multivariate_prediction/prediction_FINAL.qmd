@@ -5,7 +5,9 @@ format: html
 editor: visual
 ---
 
-## Libraries
+## These sections will load different R libraries needed for the XCP-D prediction analysis
+
+### The arrow library is needed for loading parquet files into memory
 
 ```{r}
 #| echo: false
@@ -13,28 +15,126 @@ editor: visual
 
 
 library(arrow)
-library(cifti)
-library(data.table)
-library(dplyr)
-library(ggplot2)
-library(ggsci)
-library(lme4)
-library(lmerTest)
-library(nlme)
-library(plotrix)
-library(pls)
-library(reshape2)
-library(RSpectra)
-library(tidyr)
-
 ```
 
-## Functions
+### The cifti library is needed if one wants to load any CIFTI files -- our standard imaging output files
 
 ```{r}
 #| echo: false
 #| warning: false
 
+library(cifti)
+```
+
+### The data.table library is helpful for reshaping data frames
+
+```{r}
+#| echo: false
+#| warning: false
+library(data.table)
+```
+
+### The dplyr library is helpful for looping through the same operations multiple times
+
+```{r}
+#| echo: false
+#| warning: false
+library(dplyr)
+```
+
+### The ggplot2 library is helpful for data visualizations
+
+```{r}
+#| echo: false
+#| warning: false
+library(ggplot2)
+```
+
+### The ggsci library is helpful for providing more scientific color schemes and
+### themes
+
+```{r}
+#| echo: false
+#| warning: false
+library(ggsci)
+```
+
+# The lme4 library is helpful for creating linear mixed effects models
+
+```{r}
+#| echo: false
+#| warning: false
+library(lme4)
+```
+
+### The lmerTest library is helpful for using generated models to predict 
+### outcomes
+
+```{r}
+#| echo: false
+#| warning: false
+library(lmerTest)
+```
+
+### The nlme library is helpful for non-linear mixed effects models
+
+```{r}
+#| echo: false
+#| warning: false
+library(nlme)
+```
+
+### The plotrix library is helpful for generating heatmaps
+
+```{r}
+#| echo: false
+#| warning: false
+library(plotrix)
+```
+
+### The pls library is helpful for partial-least squares regression
+
+```{r}
+#| echo: false
+#| warning: false
+library(pls)
+```
+
+### The reshape2 package is helpful for converting between vectors and matrices 
+
+```{r}
+#| echo: false
+#| warning: false
+library(reshape2)
+```
+
+### The RSpectra package is helpful for fast and efficient eigenvalue 
+### decomposition ( data dimensionality reduction )
+
+```{r}
+#| echo: false
+#| warning: false
+library(RSpectra)
+```
+
+### The tidyr package is helpful for looping multiple operations
+
+```{r}
+#| echo: false
+#| warning: false
+library(tidyr)
+```
+
+
+## The next section declares a set of functions that simplify the code we will
+## use for XCP-D prediction
+
+### align_df_to_ids appends a set of subject ids to a data frame as the column 
+### named in ## "id_col"
+
+```{r}
+#| echo: false
+#| warning: false
 align_df_to_ids <- function(df, ids, id_col = "id") {
   ids <- as.character(ids)
   df[[id_col]] <- as.character(df[[id_col]])
@@ -54,7 +154,14 @@ align_df_to_ids <- function(df, ids, id_col = "id") {
   }
   df2
 }
+```
 
+### align_rows_to_ids ensures that rows within a matrix are aligned to the 
+### matrix X.
+
+```{r}
+#| echo: false
+#| warning: false
 align_rows_to_ids <- function(X, ids) {
   ids <- as.character(ids)
   rn <- rownames(X)
@@ -77,7 +184,13 @@ align_rows_to_ids <- function(X, ids) {
   }
   X2
 }
+```
 
+### CheckCIFTI checks a CIFTI file for NaNs and reports on the number found.
+
+```{r}
+#| echo: false
+#| warning: false
 CheckCIFTI <- function(pconndir,pconn) {
   pconnpath <- paste(pconndir,"/",pconn,sep="")
   ciftidata <- read_cifti(pconnpath)
@@ -86,14 +199,29 @@ CheckCIFTI <- function(pconndir,pconn) {
   outputdf <- data.frame(pconn_name = pconn, number_nans = cmat_nans)
   return(outputdf)
 }
+```
 
+### Community Grid Info identifies the row min and row max for each community 
+### for a matrix given a set of community assignments in a data frame.
+
+```{r}
+#| echo: false
+#| warning: false
 CommunityGridInfo <- function(community_df) {
   communities <- unique(community_df$comm)
   t(sapply(communities,function(x) {c(x,min(community_df$index[community_df$comm==x]),max(community_df$index[community_df$comm==x]))}))
 }
 
+##Extract subject ID extracts the subject ID from a path variable
 extract_sub_id <- function(paths) sub(".*/sub-([^/]+)/.*", "\\1", paths)
+```
 
+### FCMap produces a heatmap visualization of a correlation or statistic matrix
+### organized and labeled by community structure.
+
+```{r}
+#| echo: false
+#| warning: false
 FCMap <- function(cmat,plottitle='Correlation Matrix',negmax=-0.5,posmax=1,xlabel="ROI",ylabel="ROI",commcolor='black',comms_df) {
   cmat_nanzero <- cmat
   cmat_nanzero[is.na(cmat_nanzero)] <- 0
@@ -112,7 +240,15 @@ FCMap <- function(cmat,plottitle='Correlation Matrix',negmax=-0.5,posmax=1,xlabe
     theme(axis.text.x = element_text(angle=90, vjust=.5, hjust=1)) +
     labs(title = plottitle, x = xlabel, y = ylabel)
 }
+```
 
+### make_p constructs a phenotype data frame from phenotypes loaded from a file, 
+### session and ids are used to match what is in the phenotype file to the 
+### selected ids and sessions.
+
+```{r}
+#| echo: false
+#| warning: false
 make_p <- function(phenos, session, ids) {
   out <- phenos %>%
     filter(session_id == session) %>%
@@ -132,11 +268,24 @@ make_p <- function(phenos, session, ids) {
 
   out
 }
+```
 
-make_X <- function(paths) {
+### make_X constructs a flattened 2D matrix from correlation matrices.
+### The upper triangular part is used to flatten the matrix into a 
+### cases X correlation data matrix.
+
+```{r}
+#| echo: false
+#| warning: false
+make_X <- function(paths,datatype = 'pconn') {
   ids <- extract_sub_id(paths)
 
-  X <- do.call(rbind, lapply(paths, pconnFunc))
+  if(datatype == "pconn"){
+    X <- do.call(rbind, lapply(paths, pconnFunc))
+  }
+  if(datatype =="tsv"){
+    X <- do.call(rbind, lapply(paths, tsvFunc))
+  }
   rownames(X) <- ids
 
   # sanity checks
@@ -145,7 +294,14 @@ make_X <- function(paths) {
 
   X
 }
+```
 
+### ManPlot constructs manhattan plots to visualize significant findings grouped 
+### by community or communityXcommunity in the case of correlations.
+
+```{r}
+#| echo: false
+#| warning: false
 ManPlot <- function(V,
                     predictor.names = NULL,
                     group.structure = NULL,
@@ -307,14 +463,35 @@ ManPlot <- function(V,
 
   invisible(TRUE)
 }
+```
 
-pconnFunc <- function(path){
+### pconnFunc loads a pconn and converts it into a vector. 
+### If dontcheckROI is set to false, it will instead report the number of ROIs.
+
+```{r}
+#| echo: false
+#| warning: false
+pconnFunc <- function(path,dontcheckROIs = TRUE){
   pconn <- cifti::read_cifti(path)
   mat <- pconn$data
-  vec <- mat[upper.tri(mat, diag = FALSE)]
-  vec
+  if (dontcheckROIs) {
+    vec <- mat[upper.tri(mat, diag = FALSE)]
+    vec
+  } else
+  {
+    vec <- dim(mat[1])
+    vec
+  }
 }
+```
 
+### ReshapeVectorAsMatrix reforms a vector into the proper matrix format. 
+### The matlength parameter specifies the number of ROIs. 
+### The diagval parameter imposes the value (default = 1) set on a diagonal.
+
+```{r}
+#| echo: false
+#| warning: false
 ReshapeVectorAsMatrix <- function(dummy_vec,matlength,diagval=1) {
   dummy_emptymat = matrix( data = rep(0,matlength^2),nrow = matlength, ncol = matlength)
   dummy_emptymat[upper.tri(dummy_emptymat,diag = FALSE)] <- dummy_vec
@@ -323,6 +500,14 @@ ReshapeVectorAsMatrix <- function(dummy_vec,matlength,diagval=1) {
   dummy_transpose[upper.tri(dummy_transpose)] <- dummy_vec
   return(dummy_transpose)
 }
+```
+
+### ReshapeWeightsAsMatrices reforms a set of parameter estimates into 
+### a correlation matrix.
+
+```{r}
+#| echo: false
+#| warning: false
 ReshapeWeightsAsMatrices <- function(weightarray,matlength) {
   weightindex <- 1
   weightlimit <- dim(weightarray)[2]
@@ -333,7 +518,14 @@ ReshapeWeightsAsMatrices <- function(weightarray,matlength) {
   }
   return(weightlist)
 }
+```
 
+### right_rows ensures that the times, ids, and data points match with the 
+### underlying data, ensuring that only the rows used for analysis are selected.
+
+```{r}
+#| echo: false
+#| warning: false
 right_rows <- function (data, times, ids, Q_points) {
     fids <- factor(ids, levels = unique(ids))
     if (!is.list(Q_points))
@@ -344,7 +536,36 @@ right_rows <- function (data, times, ids, Q_points) {
     ind <- mapply(`[`, rownams_id, split(ind, col(ind)))
     data[c(ind), ]
 }
+```
 
+### tsvFunc is the equivalent of pconnFunc except it operates on the tsv files. 
+### dontcheckROIs, when set to FALSE, will report the number of ROIs.
+
+```{r}
+#| echo: false
+#| warning: false
+tsvFunc <- function(path,dontcheckROIs = TRUE){
+  tsv <- read.table(path,header=TRUE)
+  mat <- as.matrix(tsv[,-1])
+  if (dontcheckROIs) {
+    vec <- mat[upper.tri(mat, diag = FALSE)]
+    vec <- as.numeric(vec)
+    vec
+  } else
+  {
+    vec <- dim(mat[1])
+    vec
+  }
+}
+```
+
+### ylmepred uses a created linear-mixed effects (LME) model and newdata 
+### to predict the outcome variable. The LME model can be extended to 
+### predict data in subsequent timepoints or ages. 
+
+```{r}
+#| echo: false
+#| warning: false
 ylmepred <- function (lmeObject, newdata, timeVar, times = NULL, M = 200L, 
   interval = c("confidence", "prediction"), all_times = FALSE, 
   level = 0.95, return_data = FALSE, seed = 1L) 
@@ -450,64 +671,64 @@ ylmepred <- function (lmeObject, newdata, timeVar, times = NULL, M = 200L,
 ## Get all files from all subject subdirectories
 ## ============================================================
 
-ROOT <- "/shared/hackathon/abcc/abcc_files/derivatives/abcd-hcp-pipeline_v0.1.4"
+ROOT <- "/shared/hackathon/hbcd/v1.1/hbcd/derivatives/xcp_d/"
 
 ## ------------------------------------------------------------
 ## 1. Get subject directories
 ## ------------------------------------------------------------
-subs <- list.dirs(
-  path        = ROOT,
-  full.names  = TRUE,
-  recursive   = FALSE
-)
+#subs <- list.dirs(
+#  path        = ROOT,
+#  full.names  = TRUE,
+#  recursive   = FALSE
+#)
 
 # Keep only directories that start with "sub-"
-subs <- subs[grepl("^sub-", basename(subs))]
+#subs <- subs[grepl("^sub-", basename(subs))]
 
-pconnname <- "task-rest_bold_atlas-Gordon2014FreeSurferSubcortical_desc-filtered_timeseries_thresh-fd0p2mm_censor-10min_conndata-network_connectivity"
+pconnname <- "task-rest_dir-PA_space-fsLR_seg-Gordon_stat-pearsoncorrelation_relmat"
 
-cat("Number of subject directories found:", length(subs), "\n")
+#cat("Number of subject directories found:", length(subs), "\n")
 
 ## ------------------------------------------------------------
 ## 2. Get all files recursively within each subject
 ## ------------------------------------------------------------
-sessions <- list.files(
-  path       = subs,
-  recursive  = FALSE,
-  full.names = TRUE
-)
+#sessions <- list.files(
+#  path       = subs,
+#  recursive  = FALSE,
+#  full.names = TRUE
+#)
 
-cat("Total sessions found:", length(sessions), "\n")
+#cat("Total sessions found:", length(sessions), "\n")
 
-head(sessions)
-pconnpattern = paste(pconnname,"\\.pconn\\.nii$",sep="")
-pconn_files <- list.files(
-  path       = sessions,
-  pattern    = pconnpattern,
-  recursive  = TRUE,
-  full.names = TRUE
-)
+#head(sessions)
+#pconnpattern = paste(pconnname,"\\.tsv$",sep="")
+#pconn_files <- list.files(
+#  path       = sessions,
+#  pattern    = pconnpattern,
+#  recursive  = TRUE,
+#  full.names = TRUE
+#)
 
-cat("Total pconn files found:", length(pconn_files), "\n")
+#cat("Total pconn files found:", length(pconn_files), "\n")
 
-subject_ids <- sub(".*(sub-[^/]+).*", "\\1", pconn_files)
-subject_ids_clean <- sub(".*sub-([^_]+)_ses.*", "\\1", subject_ids)
+#subject_ids <- sub(".*(sub-[^/]+).*", "\\1", pconn_files)
+#subject_ids_clean <- sub(".*sub-([^_]+)_ses.*", "\\1", subject_ids)
 
-ses_id <- sub(".*_(ses-[^_]+)_.*", "\\1", subject_ids)
-head(ses_id)
+#ses_id <- sub(".*_(ses-[^_]+)_.*", "\\1", subject_ids)
+#head(ses_id)
 ```
 
 ```{r}
 #| eval: false
 #| echo: false
-ses_00A <- pconn_files[grepl("_ses-00A", basename(pconn_files))]
-sub_ids_00A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_00A)
-ses_02A <- pconn_files[grepl("_ses-02A", basename(pconn_files))]
-sub_ids_02A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_02A)
-ses_04A <- pconn_files[grepl("_ses-04A", basename(pconn_files))]
-sub_ids_04A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_04A)
-ses_06A <- pconn_files[grepl("_ses-06A", basename(pconn_files))]
-sub_ids_06A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_06A)
+#ses_00A <- pconn_files[grepl("_ses-00A", basename(pconn_files))]
+#sub_ids_00A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_00A)
+#ses_02A <- pconn_files[grepl("_ses-02A", basename(pconn_files))]
+#sub_ids_02A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_02A)
+#ses_04A <- pconn_files[grepl("_ses-04A", basename(pconn_files))]
+#sub_ids_04A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_04A)
+#ses_06A <- pconn_files[grepl("_ses-06A", basename(pconn_files))]
+#sub_ids_06A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_06A)
 
 ```
 
@@ -517,15 +738,15 @@ sub_ids_06A <- sub(".*/sub-([^/]+)/.*", "\\1", ses_06A)
 #   list(sub_ids_00A, sub_ids_02A, sub_ids_04A)
 # )
 
-common_ids <- readRDS("common.RDS")
+common_ids <- readRDS("/shared/hackathon/working-area/hbcd_workshop/common.RDS")
 
-length(common_ids)
-head(common_ids)
+#length(common_ids)
+#head(common_ids)
 ```
 
 ```{r}
 #| echo: false
-phenofolder <- "/shared/abcd-6-0-release-tabulated-prod"
+phenofolder <- "/shared/hackathon/abcd/dairc_files/rawdata/phenotype/"
 phenofile <- paste(phenofolder,"nc_y_nihtb.parquet",sep = "/")
 phenos <- read_parquet(phenofile)
 
@@ -591,11 +812,11 @@ options(stringsAsFactors = FALSE)
 # X2 <- X2[rownames(X2) %in% common_ids, , drop = FALSE]
 # X4 <- X4[rownames(X4) %in% common_ids, , drop = FALSE]
 
-X0 <- readRDS("X0.RDS")
+X0 <- readRDS("/shared/hackathon/working-area/hbcd_workshop/X0.RDS")
 X0 <- scale(X0)
-X2 <- readRDS("X2.RDS")
+X2 <- readRDS("/shared/hackathon/working-area/hbcd_workshop/X2.RDS")
 X2 <- scale(X2)
-X4 <- readRDS("X4.RDS")
+X4 <- readRDS("/shared/hackathon/working-area/hbcd_workshop/X4.RDS")
 X4 <- scale(X4)
 
 ## ------------------------------------------------------------
@@ -603,8 +824,8 @@ X4 <- scale(X4)
 ##    (ensures we can accurately retrieve the matrix and visualize)
 ## ------------------------------------------------------------
 
-nROIs <-  pconnFunc(ses_00A[1],countROIs=TRUE)
-
+#nROIs <-  pconnFunc(ses_00A[1],countROIs=TRUE)
+nROIs <- 352
 
 ## ------------------------------------------------------------
 ## 4) Load phenos and compute FINAL common_ids intersection

@@ -25,6 +25,8 @@ point it to the ABCC md HDF5 file.
 
 ```{r load ModelArray}
 library(ModelArray)
+library(tidyr)
+library(dplyr)
 # Use the real path
 h5_path <- "/shared/hackathon/abcd/abcc_files/derivatives/qsirecon-ModelArray/qsirecon-DSIStudio_model-tensor_param-md.h5"
 # create a ModelArray-class object:
@@ -192,16 +194,17 @@ analyseOneElement.wrap(
   on_error = "debug"
 )
 ```
-This will print the column names that will be retrieved from the function when it's run in the `ModelArray` looping machinery.
-It looks good, so we can run it on all the voxels:
+This will print the column names that will be retrieved from the function when it's run in the `ModelArray` looping machinery. This can be run on your own laptop! 
+
+This piece can run it on all the voxels, however, to run on the cluster we recommend you use our tutorial on cluster-based submissions:
 
 ```{r run_wrapped_function, eval=FALSE}
-res_wrap <- ModelArray.wrap(
-  FUN = my_mean_md_fun,
-  data = modelarray,
-  phenotypes = phenotypes,
-  scalar = "md",
-  n_cores = 8
+#res_wrap <- ModelArray.wrap(
+#  FUN = my_mean_md_fun,
+#  data = modelarray,
+#  phenotypes = phenotypes,
+#  scalar = "md",
+#  n_cores = 8
 )
 ```
 
