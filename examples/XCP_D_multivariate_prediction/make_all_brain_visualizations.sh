@@ -1,0 +1,3 @@
+#1/bin/bash
+./make_brain_visualizations.sh ~/HDCC_Sandbox_tutorials/examples/XCP_D_multivariate_prediction/Results/V02_weights V02_PC_weights_for_strsup_scaled_score
+./make_brain_visualizations.sh ~/HDCC_Sandbox_tutorials/examples/XCP_D_multivariate_prediction/Results/V03_weights V03_PC_weights_for_strsup_scaled_score
