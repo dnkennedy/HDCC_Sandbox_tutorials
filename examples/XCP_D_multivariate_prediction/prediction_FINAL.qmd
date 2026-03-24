@@ -11,120 +11,25 @@ Often, whole-brain multi-variate prediction requires vast computational resource
 
 ## Step 1. Loading libraries
 
-The first step is to load a series of libraries, each library has its own description below.
-
-Library 1. The arrow library is needed for loading parquet files into memory
+The first step is to load a series of libraries (see \[Module 3 RStudio Setup\](<https://github.com/DCAN-Labs/HDCC_Sandbox_tutorials/blob/main/examples/install_dependencies/HDCC_workshop_tutorial_package_script.R>) script for documentation on the function of each of these packages).
 
 ```{r}
 #| echo: false
 #| warning: false
-
 
 library(arrow)
-```
-
-Library 2. The cifti library is needed if one wants to load any CIFTI files. The CIFTI format is our standard for HBCD imaging output files.
-
-```{r}
-#| echo: false
-#| warning: false
-
 library(cifti)
-```
-
-Library 3. The data.table library is helpful for reshaping data frames.
-
-```{r}
-#| echo: false
-#| warning: false
 library(data.table)
-```
-
-Library 4. The dplyr library is helpful for looping through the same operations multiple times.
-
-```{r}
-#| echo: false
-#| warning: false
 library(dplyr)
-```
-
-Library 5. The ggplot2 library is helpful for data visualizations.
-
-```{r}
-#| echo: false
-#| warning: false
 library(ggplot2)
-```
-
-Library 6. The ggsci library is helpful for providing more scientific color schemes and themes.
-
-```{r}
-#| echo: false
-#| warning: false
 library(ggsci)
-```
-
-Library 7. The lme4 library is helpful for creating linear mixed effects models.
-
-```{r}
-#| echo: false
-#| warning: false
 library(lme4)
-```
-
-Library 8. The lmerTest library is helpful for using generated models to predict outcomes.
-
-```{r}
-#| echo: false
-#| warning: false
 library(lmerTest)
-```
-
-Library 9. The nlme library is helpful for non-linear mixed effects models.
-
-```{r}
-#| echo: false
-#| warning: false
 library(nlme)
-```
-
-Library 10. The plotrix library is helpful for generating heatmaps.
-
-```{r}
-#| echo: false
-#| warning: false
 library(plotrix)
-```
-
-Library 11. The pls library is helpful for partial-least squares regression.
-
-```{r}
-#| echo: false
-#| warning: false
 library(pls)
-```
-
-Library 12. The reshape2 package is helpful for converting between vectors and matrices.
-
-```{r}
-#| echo: false
-#| warning: false
 library(reshape2)
-```
-
-Library 13. The RSpectra package is helpful for fast and efficient eigenvalue decomposition ( data dimensionality reduction ).
-
-```{r}
-#| echo: false
-#| warning: false
 library(RSpectra)
-```
-
-Library 14. The tidyr package is helpful for looping multiple operations.
-
-```{r}
-#| echo: false
-#| warning: false
 library(tidyr)
 ```
 
