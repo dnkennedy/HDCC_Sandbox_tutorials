@@ -37,13 +37,12 @@ library(tidyr)
 
 The next step will define the individual functions used for this tutorial.
 
-### Function 1. align_df_to_ids
-
-This function appends a set of subject ids to a data frame as the column named in "id_col"
-
 ```{r}
 #| echo: false
 #| warning: false
+
+#| Function 1: align_df_to_ids
+#| This function appends a set of subject IDs to a data frame as the column named in "id_col"
 align_df_to_ids <- function(df, ids, id_col = "id") {
   ids <- as.character(ids)
   df[[id_col]] <- as.character(df[[id_col]])
@@ -63,15 +62,9 @@ align_df_to_ids <- function(df, ids, id_col = "id") {
   }
   df2
 }
-```
 
-### Function 2. align_rows_to_ids
-
-This function ensures that rows within a matrix are aligned to the matrix X.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 2: align_rows_to_ids
+#| This function ensures that rows within a matrix are aligned to the matrix X
 align_rows_to_ids <- function(X, ids) {
   ids <- as.character(ids)
   rn <- rownames(X)
@@ -94,15 +87,9 @@ align_rows_to_ids <- function(X, ids) {
   }
   X2
 }
-```
 
-### Function 3. CheckCIFTI
-
-This function checks a CIFTI file for NaNs and reports on the number found.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 3: CheckCIFTI
+#| This function checks a CIFTI file for NaNs and reports on the number found.
 CheckCIFTI <- function(pconndir,pconn) {
   pconnpath <- paste(pconndir,"/",pconn,sep="")
   ciftidata <- read_cifti(pconnpath)
@@ -111,15 +98,9 @@ CheckCIFTI <- function(pconndir,pconn) {
   outputdf <- data.frame(pconn_name = pconn, number_nans = cmat_nans)
   return(outputdf)
 }
-```
 
-### Function 4. CommunityGridInfo
-
-This function identifies the row min and row max for each community for a matrix given a set of community assignments in a data frame.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 4: CommunityGridInfo
+#| This function identifies the row min and row max for each community for a matrix given a set of community assignments in a data frame.
 CommunityGridInfo <- function(community_df) {
   communities <- unique(community_df$comm)
   t(sapply(communities,function(x) {c(x,min(community_df$index[community_df$comm==x]),max(community_df$index[community_df$comm==x]))}))
@@ -127,15 +108,9 @@ CommunityGridInfo <- function(community_df) {
 
 ##Extract subject ID extracts the subject ID from a path variable
 extract_sub_id <- function(paths) sub(".*/sub-([^/]+)/.*", "\\1", paths)
-```
 
-### Function 5. FCMap
-
-This function produces a heatmap visualization of a correlation or statistic matrix organized and labeled by community structure.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 5: FCMap
+#| This function produces a heatmap visualization of a correlation or statistic matrix organized and labeled by community structure.
 FCMap <- function(cmat,plottitle='Correlation Matrix',negmax=-0.5,posmax=1,xlabel="ROI",ylabel="ROI",commcolor='black',comms_df) {
   cmat_nanzero <- cmat
   cmat_nanzero[is.na(cmat_nanzero)] <- 0
@@ -154,15 +129,9 @@ FCMap <- function(cmat,plottitle='Correlation Matrix',negmax=-0.5,posmax=1,xlabe
     theme(axis.text.x = element_text(angle=90, vjust=.5, hjust=1)) +
     labs(title = plottitle, x = xlabel, y = ylabel)
 }
-```
 
-### Function 6. make_p
-
-This function constructs a phenotype data frame from phenotypes loaded from a file, session and ids are used to match what is in the phenotype file to the selected ids and sessions.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 6: make_p
+#| This function constructs a phenotype data frame from phenotypes loaded from a file, session and ids are used to match what is in the phenotype file to the selected ids and sessions.
 make_p <- function(phenos, session, ids) {
   out <- phenos %>%
     filter(session_id == session) %>%
@@ -182,15 +151,9 @@ make_p <- function(phenos, session, ids) {
 
   out
 }
-```
 
-### Function 7. make_X
-
-This function constructs a flattened 2D matrix from correlation matrices. The upper triangular part is used to flatten the matrix into a cases X correlation data matrix.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 7: make_x
+#| This function constructs a flattened 2D matrix from correlation matrices. The upper triangular part is used to flatten the matrix into a cases X correlation data matrix.
 make_X <- function(paths,datatype = 'pconn') {
   ids <- extract_sub_id(paths)
 
@@ -208,15 +171,9 @@ make_X <- function(paths,datatype = 'pconn') {
 
   X
 }
-```
 
-### Function 8. ManPlot
-
-This function constructs manhattan plots to visualize significant findings grouped by community or communityXcommunity in the case of correlations.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 8: ManPlot
+#| This function constructs manhattan plots to visualize significant findings grouped by community or communityXcommunity in the case of correlations
 ManPlot <- function(V,
                     predictor.names = NULL,
                     group.structure = NULL,
@@ -378,15 +335,9 @@ ManPlot <- function(V,
 
   invisible(TRUE)
 }
-```
 
-### Function 9. pconnFunc
-
-This function loads a pconn and converts it into a vector. If dontcheckROI is set to false, it will instead report the number of ROIs.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 9: pconnFunc
+#| This function loads a pconn and converts it into a vector. If dontcheckROI is set to false, it will instead report the number of ROIs.
 pconnFunc <- function(path,dontcheckROIs = TRUE){
   pconn <- cifti::read_cifti(path)
   mat <- pconn$data
@@ -399,15 +350,9 @@ pconnFunc <- function(path,dontcheckROIs = TRUE){
     vec
   }
 }
-```
 
-### Function 10. ReshapeVectorAsMatrix
-
-This function reforms a vector into the proper matrix format. The matlength parameter specifies the number of ROIs. The diagval parameter imposes the value (default = 1) set on a diagonal.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 10: ReshapeVectorAsMatrix
+#| This function reforms a vector into the proper matrix format. The matlength parameter specifies the number of ROIs. The diagval parameter imposes the value (default = 1) set on a diagonal.
 ReshapeVectorAsMatrix <- function(dummy_vec,matlength,diagval=1) {
   dummy_emptymat = matrix( data = rep(0,matlength^2),nrow = matlength, ncol = matlength)
   dummy_emptymat[upper.tri(dummy_emptymat,diag = FALSE)] <- dummy_vec
@@ -416,15 +361,9 @@ ReshapeVectorAsMatrix <- function(dummy_vec,matlength,diagval=1) {
   dummy_transpose[upper.tri(dummy_transpose)] <- dummy_vec
   return(dummy_transpose)
 }
-```
 
-### Function 11. ReshapeWeightsAsMatrices
-
-This function reshapes a set of parameter estimates into a correlation matrix.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 11: ReshapeWeightsAsMatrices
+#| This function reshapes a set of parameter estimates into a correlation matrix.
 ReshapeWeightsAsMatrices <- function(weightarray,matlength,usable_cols = NULL) {
   if (is.null(usable_cols)){
     temp_weightarray <- weightarray
@@ -442,15 +381,9 @@ ReshapeWeightsAsMatrices <- function(weightarray,matlength,usable_cols = NULL) {
   }
   return(weightlist)
 }
-```
 
-### Function 12. right_rows
-
-This function ensures that the times, ids, and data points match with the underlying data, ensuring that only the rows used for analysis are selected.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 12: right_rows
+#| This function ensures that the times, ids, and data points match with the underlying data, ensuring that only the rows used for analysis are selected.
 right_rows <- function (data, times, ids, Q_points) {
     fids <- factor(ids, levels = unique(ids))
     if (!is.list(Q_points))
@@ -461,15 +394,9 @@ right_rows <- function (data, times, ids, Q_points) {
     ind <- mapply(`[`, rownams_id, split(ind, col(ind)))
     data[c(ind), ]
 }
-```
 
-### Function 13. tsvFunc
-
-This function is the equivalent of pconnFunc except it operates on the tsv files. dontcheckROIs, when set to FALSE, will report the number of ROIs.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 13: tsvFunc
+#| This function is the equivalent of pconnFunc except it operates on the tsv files. dontcheckROIs, when set to FALSE, will report the number of ROIs.
 tsvFunc <- function(path,dontcheckROIs = TRUE){
   tsv <- read.table(path,header=TRUE)
   mat <- as.matrix(tsv[,-1])
@@ -483,15 +410,9 @@ tsvFunc <- function(path,dontcheckROIs = TRUE){
     vec
   }
 }
-```
 
-### Function 14. WritePCOutputs
-
-This function takes the output weight matrices and produces tsvs
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 14: WritePCOutputs
+#| This function takes the output weight matrices and produces tsvs
 WritePCOutputs <- function(weightmatlist,fileroot = "PC_weights_for_",filepath,defaultNA=0) {
   for(varindex in 1:length(weightmatlist)){ 
     temp_mat <- weightmatlist[[varindex]]
@@ -506,15 +427,8 @@ WritePCOutputs <- function(weightmatlist,fileroot = "PC_weights_for_",filepath,d
   }
 }
 
-```
-
-### Function 15. ylmepred
-
-This function uses a created linear-mixed effects (LME) model and newdata to predict the outcome variable. The LME model can be extended to predict data in subsequent timepoints or ages.
-
-```{r}
-#| echo: false
-#| warning: false
+#| Function 15: ylmepred
+#| This function uses a created linear-mixed effects (LME) model and newdata to predict the outcome variable. The LME model can be extended to predict data in subsequent timepoints or ages.
 ylmepred <- function (lmeObject, newdata, timeVar, times = NULL, M = 200L, 
   interval = c("confidence", "prediction"), all_times = FALSE, 
   level = 0.95, return_data = FALSE, seed = 1L) 
@@ -607,7 +521,6 @@ ylmepred <- function (lmeObject, newdata, timeVar, times = NULL, M = 200L,
     modes[id_pred, , drop = FALSE])
   return(list(fit=fitted_y, pred=predicted_y))
 }
-
 ```
 
 ## Step 3. Selecting data files
