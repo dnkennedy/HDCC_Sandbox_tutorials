@@ -1,5 +1,5 @@
 ---
-title: "Developing a function for ModelArray.wrap in the NBDC sandbox"
+title: "Running whole brain ABCD analysis via ModelArray.wrap in the NBDC sandbox"
 output: rmarkdown::html_vignette
 vignette: >
   %\VignetteIndexEntry{Developing a function for ModelArray.wrap in the NBDC sandbox}
@@ -194,6 +194,68 @@ analyseOneElement.wrap(
   on_error = "debug"
 )
 ```
-This will print the column names that will be retrieved from the function when it's run in the `ModelArray` looping machinery. This can be run on your own laptop!  To run on the cluster we recommend you use our tutorial on cluster-based submissions:
+This will print the column names that will be retrieved from the function when it's run in the `ModelArray` looping machinery. This can be run on your own laptop! 
+
+This piece can run it on all the voxels:
+
+```{r run_wrapped_function, eval=FALSE}
+#res_wrap <- ModelArray.wrap(
+#  FUN = my_mean_md_fun,
+#  data = modelarray,
+#  phenotypes = phenotypes,
+#  scalar = "md",
+#  n_cores = 8
+)
+```
+
+This will take a while.
+Once it finiehes you can take a look at the results:
+
+```{r head_results, eval=FALSE}
+head(res_wrap)
+```
+
+```{.console}
+# This needs to be replaced with actual output
+  element_id md_session_1 md_session_2 md_session_3 md_session_4 session_id.df session_id.sumsq session_id.meansq session_id.statistic session_id.p.value session_id.partial_eta_sq
+1          0              3.108483              3.009349            3.063119            2.692335             3         45.52142         15.173806             59.35110       5.688104e-37                0.07093606
+2          1              2.618739              2.673533            2.494077            2.324791             3         24.51961          8.173205             28.88297       2.474739e-18                0.03582533
+3          2              3.111822              3.056225            2.983709            2.812225             3         23.59899          7.866330             19.95448       9.059350e-13                0.02502795
+4          3              3.669784              3.621715            3.054638            3.329743             3        186.55051         62.183503             83.32945       3.261715e-51                0.09682010
+5          4              2.790135              2.729325            2.494522            2.444265             3         53.34644         17.782147             55.42033       1.336311e-34                0.06655069
+6          5              2.996483              3.043458            2.785565            2.650955             3         40.25648         13.418828             41.60603       3.458560e-26                0.05080478
+```
+
+
+We now save the results data frame into the original h5 file:
+
+```{r write results, eval=FALSE}
+# CRITICAL NOTE: when we run this locally, we copy the h5 to our home directory and write the results into the copy.
+# IDK if this actually works, creating a new h5 file with just the results. Will have to try it out.
+writeResults("/path/to/a/new/h5/file.h5", df.output = res_wrap, analysis_name = "md_anova_and_means")
+```
+
+Notice that the the analysis name specified in argument `analysis_name` will be used in `ModelArrayIO` in the next step when converting results back to nii.gz file format. 
+It'll also be used as the prefix of the nii.gz files to be saved.
+
+
+## Step 4 Convert results to nii.gz file format
+
+
+### Step 4.1. Convert the statistical results into mif file format using ConFixel
+We now use `ConFixel` to convert the results into a list of mif files:
+
+```{.console}
+$ voxelstats_write \
+  --cohort-file /nbdc-sandbox/derivatives/qsirecon-modelarray/ABCC_md_phenotypes.csv \
+  --analysis-name md_anova_and_means \
+  --input-hdf5 /nbdc-sandbox/derivatives/qsirecon-modelarray/qsirecon-md.h5 \
+  --output-dir /where/you/want/to/put/your/niftis \
+  --example-nifti /nbdc-sandbox/derivatives/qsirecon-modelarray/qsirecon-md.nii.gz # Need to find the real path
+```
+
+After it's done, in the main folder `/where/you/want/to/put/your/niftis`, 
+there will be a new folder called `md_anova_and_means` and converted result `nii.gz` files are in this new folder:
+
 
 

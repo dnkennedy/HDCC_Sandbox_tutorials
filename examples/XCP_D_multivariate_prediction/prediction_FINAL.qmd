@@ -529,7 +529,7 @@ The next step will select the data files we will want to use for generating the 
 
 ### 1) Selecting imaging files
 
-Change ROOT to the path where the pipeline derivatives are located (e.g. "XCP_D). Change pconnname to the root for the imaging files you want to load. Change pconnpattern to select the imaging file types you want to load. For example if you wanted to load pconns, you would change the extension from tsv to pconn.nii.
+Change ROOT to the path where the pipeline derivatives are located (e.g. `XCP_D`). Change pconnname to the root for the imaging files you want to load (e.g. `task-rest_space-fsLR_seg-Gordon_stat-pearsoncorrelation_relmat`). Change pconnpattern to select the imaging file types you want to load (.e.g `.tsv`). For example if you wanted to load pconns, you would change the extension from tsv to pconn.nii.
 
 For HBCD we will need to aggregate across two output flders: xcp_d-0f306a2f+0ef9c88a is better for V02, while xcp_d-2afa9081+0ef9c88a is better for V03 and V04.
 
@@ -538,6 +538,8 @@ For shortened workshops, we can skip this step as it is time consuming.
 ```{r}
 #| eval: false
 #| echo: false
+
+#The `ROOT` paths in the first code chunk, which is reprinted below. `V2ROOT` may be needed if you are using data from more than one derivative folder.
 
 #ROOT <- "/shared/hackathon/hbcd/v2.0/hbcd/derivatives/xcp_d-2afa9081+0ef9c88a"
 #V2ROOT <- "/shared/hackathon/hbcd/v2.0/hbcd/derivatives/xcp_d-0f306a2f+0ef9c88a"
@@ -561,6 +563,7 @@ For shortened workshops, we can skip this step as it is time consuming.
 #subs <- subs[grepl("^sub-", basename(subs))]
 #v2subs <- v2subs[grepl("^sub-", basename(v2subs))]
 
+#To select a different imaging file, edit the `pconnname` below.
 #pconnname <- "task-rest_space-fsLR_seg-Gordon_stat-pearsoncorrelation_relmat"
 
 #cat("Number of subject directories found:", length(subs), "\n")
@@ -665,7 +668,7 @@ head(common_ids)
 
 ### 4) Load phenotypic data
 
-The next section loads the phenotypic (i.e. non-imaging ) data. Choosing a different "phenofolder" and "phenofile" will enable users to use different phenotypic data available for HBCD.
+The next section loads the phenotypic (i.e. non-imaging ) data. Choosing a different "phenofolder" and "phenofile" will enable users to use different phenotypic data available for HBCD. Change the `phenofolder` to select a different dataset. Change the `phenofile` to select a different tabulated file.
 
 ```{r}
 #| echo: false
@@ -1063,7 +1066,7 @@ bad_counts
 
 ### 2) Construct a linear mixed effects model (LME)
 
-The LME will use all 10 PCs with a PC1 X time interaction. The fixed effects can be edited where it says "fixed". The random effects can be edited where it says random. The method can be selected where it says method.
+One can modify the statistical model used to perform BWAS via LME, which will use all 10 PCs with a PC1 X time interaction by default. Modify the `fixed` variable to select the fixed effects and interactions you want to model. Change the `random` variable to select the random effects and interactions to model. Change the `method` to use a different mixed-effects model estimator.
 
 ```{r}
 model_1 <- nlme::lme(
@@ -1137,7 +1140,7 @@ cor(r2$y, r2$yhat)
 
 ### 2) Plot wave 1 model performance
 
-One such plot is a scatter plot of predicted vs. observed using ggplot2 for the first wave.
+One such plot is a scatter plot of predicted vs. observed using ggplot2 for the first wave. A scatter plot of the predicted vs. observed outcomes is very helpful for evaluating model performance. Density heatmaps further help by revealing where the greatest concentration of cases are located. 
 
 ```{r}
 
@@ -1338,7 +1341,7 @@ ManPlot(
 
 ### 10) Output weights as tsvs brain-based visualization walkthrough
 
-R outputs are better defined as TSVs, which we will do below. We can use templates and the workbench via the terminal to convert these TSVs to brain imaging outputs for brain-based visualization.
+R is excellent at exporting tsvs, which can then be converted to pconns using `workbench`. The code repository contains a script that will automatically generate pconns and pscalars from output TSVs. Users can change the tsv output by editing step 7.10, reprinted below. Change the `fileroot` to modify the ouptut filenames. Change the `filepath` to modify where the outputs will be located.
 
 ```{r}
 WritePCOutputs(sv0weightmatlist,fileroot="V02_PC_weights_for_strsup_scaled_score",filepath="~/HDCC_Sandbox_tutorials/examples/XCP_D_multivariate_prediction/Results/V02_weights")
